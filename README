@@ -70,14 +70,16 @@ DESCRIPTION
 
   EXPORT_OK
 
-    Function `fork_now' could be imported.
+    Functions `fork_now', `waitpids', `run_back', `run_back_now',
+    `all_exit_ok' and `running_now' can be imported. Tag `:all' is defined
+    to import all of them.
 
   FUNCTIONS
 
     There are several not exported functions that can be used to configure
     the module:
 
-    size(), size(int)
+    size(), size($number)
         If an argument is given the maximun number of concurrent processes
         is set to it and the number of maximun processes that were allowed
         before is returned.
@@ -97,7 +99,25 @@ DESCRIPTION
               print "I'm the child\n"; exit;
           }
 
-    debug(), debug(boolean), trace(), trace(boolean)
+    waitpids(@pid)
+        Will wait for all the processes in @pid to exit. It returns an array
+        with pairs pid and exit values (pid1, exit1, pid2, exit2, pid3,
+        exit3,...) as returned by individual waitpid calls.
+
+    run_back(\&code), run_back { code }
+        Runs the argument subrutine in a forked child process and returns
+        the pid number for the new process.
+
+    run_back_now(\&code), run_back_now { code }
+        A mix between run_back and fork_now.
+
+    all_exit_ok(@pid)
+        Do a waitpids call and test that all the processes exit with code 0.
+
+    running_now()
+        Returns the number of child processes currently running.
+
+    debug(), debug($boolean), trace(), trace($boolean)
         Change or return the status for the debug and trace modes.
 
     import(pkg,opt,val,opt,val,...,fnt_name,fnt_name,...)
@@ -109,14 +129,15 @@ DESCRIPTION
           use Fork::Queue size=>10, debug=>1;
 
         Anything that is not `size', `debug' or `trace' is expected to be a
-        function name to be imported (only `fork_now' is supported at this
-        time):
+        function name to be imported.
 
-          use Fork::Queue size=>10, 'fork_now';
+          use Fork::Queue size=>10, ':all';
 
   BUGS
 
-        None that I know, but this is just version 0.02!
+        None that I know, but this is just version 0.03!
+
+        The module has only been tested under Solaris 2.6
 
         Child behaviour althought deterministic could be changed to
         something better. I would accept any suggestions on it.
@@ -134,7 +155,7 @@ AUTHOR
         Salvador Fandino <sfandino@yahoo.com>
 
 SEE ALSO
-        the perlfunc(1) manpage, the perlfork(1) manpage, the
-        Parallel::ForkManager manpage. The `example.pl' script contained in
-        the module distribution.
+        the perlfunc(1) manpage, the perlipc(1) manpage, the POSIX manpage,
+        the perlfork(1) manpage, the Parallel::ForkManager manpage. The
+        `example.pl' script contained in the module distribution.
 

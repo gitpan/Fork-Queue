@@ -1,6 +1,6 @@
 #!/apps/perl/std/bin/perl -w
 
-use Fork::Queue size => 4, debug => 1;
+use Fork::Queue size => 4, debug => 1, trace => 1, ':all';
 
 foreach (1..10) {
   my $f=fork;
@@ -21,7 +21,7 @@ Fork::Queue::debug(0); # debug is off
 
 package other; # just to test it works in any package
 
-print "-- Going again!\n";
+print "\n-- Going again!\n";
 
 foreach (1..20) {
   my $f=fork;
@@ -33,7 +33,69 @@ foreach (1..20) {
   }
 }
 
-
-
 1 while wait != -1;
 
+
+package another;
+
+print "\n-- Another try!\n";
+
+Fork::Queue::size(2);
+Fork::Queue::debug(1);
+
+use Fork::Queue ':all';
+
+my $all_ok=all_exit_ok
+  Fork::Queue::run_back {
+    print "Hello, I'm running back $$\n";
+    sleep rand 5;
+    print "-- I'm tired, going away $$\n";
+  },
+  run_back {
+    print "Hello, I'm also running back $$\n";
+    sleep rand 5;
+    print "-- I'm tired, going away $$\n"
+  },
+  run_back {
+    print "Hello, I'm running back $$\n";
+    sleep rand 5;
+    print "-- I'm tired, going away $$\n";
+  },
+  run_back {
+    print "Hello, I'm also running back $$\n";
+    sleep rand 5;
+    print "-- I'm tired, going away $$\n"
+  };
+
+
+
+print "-- all_exit_ok return $all_ok\n";
+
+
+print "\n-- And the last one!\n";
+
+my $all_ok2=all_exit_ok
+  run_back {
+    print "Hello, I'm running back $$\n";
+    sleep rand 5;
+    print "-- I'm tired, going away $$\n";
+  },
+  run_back {
+    print "Hello, I'm also running back $$\n";
+    sleep rand 5;
+    print "-- I'm tired, going away $$\n";
+    $?=1; # I'm going to fail
+  },
+  run_back {
+    print "Hello, I'm running back $$\n";
+    sleep rand 5;
+    print "-- I'm tired, going away $$\n";
+    exit(1); # I'm going to fail too
+  },
+  run_back {
+    print "Hello, I'm also running back $$\n";
+    sleep rand 5;
+    print "-- I'm tired, going away $$\n"
+  };
+
+print "-- all_exit_ok return $all_ok2\n";

@@ -4,16 +4,23 @@ require 5.005_62;
 use strict;
 use warnings;
 require Exporter;
-
 use Carp;
+
+use POSIX ":sys_wait_h";
 
 our @ISA = qw(Exporter);
 
-our %EXPORT_TAGS = ( all => [ qw( fork_now ) ] );
+our %EXPORT_TAGS = ( all => [ qw( fork_now
+				  waitpids
+				  run_back
+				  run_back_now
+				  all_exit_ok
+				  running_now ) ] );
+
 our @EXPORT_OK = ( @{ $EXPORT_TAGS{'all'} } );
 our @EXPORT = qw();
 
-our $VERSION = '0.02';
+our $VERSION = '0.03';
 
 # parameters
 my $queue_size=4;
@@ -44,7 +51,9 @@ sub import {
       splice @opts,$i--,2;
     }
   }
-  return $pkg->SUPER::import(@opts);
+  carp "Exporting '".join("', '",@opts)."' symbols from Fork::Queue" if $debug;
+  @_=($pkg,@opts);
+  goto &Exporter::import;
 }
 
 sub size {
@@ -91,6 +100,13 @@ sub trace {
   return $old_trace;
 }
 
+# sub to store internally captured processes
+sub _push_captured {
+  push @captured, shift,$?;
+  croak "corrupted captured stack" unless ($#captured & 1)
+}
+
+# do the real wait and housekeeping
 sub _wait () {
   carp "Fork::Queue::_wait private function called" if $debug && $trace;
   carp "Waiting for child processes to exit" if $debug;
@@ -122,17 +138,9 @@ sub new_wait () {
   return _wait;
 }
 
-sub new_waitpid ($$) {
+sub _waitpid ($$) {
   my ($pid,$flags)=@_;
-  carp "Fork::Queue::waitpid called" if $trace;
-  foreach my $i (0..$#captured) {
-    next if $i&1;
-    if ($captured[$i] == $pid) {
-      $?=$captured[$pid+1];
-      splice @captured,$i,2;
-      return $pid;
-    }
-  }
+  carp "Fork::Queue::_waitpid($pid,$flags) private function called" if $debug && $trace;
   carp "Waiting for child process $pid to exit" if $debug;
   my $w=CORE::waitpid($pid,$flags);
   if ($w != -1) {
@@ -149,6 +157,26 @@ sub new_waitpid ($$) {
     carp "No child processes left, continuing" if $debug;
   }
   return $w;
+}
+
+sub _clean() {
+  my $pid;
+  _push_captured($pid) while(($pid=_waitpid(-1,WNOHANG))>0);
+}
+
+sub new_waitpid ($$) {
+  my ($pid,$flags)=@_;
+  carp "Fork::Queue::waitpid called" if $trace;
+  foreach my $i (0..$#captured) {
+    next if $i&1;
+    my $r;
+    if ($pid==$captured[$i] or $pid==-1) {
+      croak "corrupted captured stack" unless ($#captured & 1);
+      ($r,$?)=splice @captured,$i,2;
+      return $r;
+    }
+  }
+  return _waitpid($pid,$flags);
 }
 
 sub new_exit (;$ ) {
@@ -188,7 +216,7 @@ sub new_fork () {
     carp "Waiting that some process finishes before continuing" if $debug;
     my $nw;
     if (($nw=_wait) != -1) {
-      push @captured,$nw,$?;
+      _push_captured $nw;
     }
     else {
       carp "Fork queue seems to be corrupted, $queue_now childs lost";
@@ -201,6 +229,86 @@ sub new_fork () {
 sub fork_now () {
   carp "Fork::Queue::fork_now called" if $trace;
   return _fork;
+}
+
+sub waitpids {
+  carp "Fork::Queue::waitpids(".join(", ",@_).")" if $trace;
+  my @result;
+  foreach my $pid (@_) {
+    if (defined($pid)) {
+      carp "Waiting for child $pid to exit" if $debug;
+      my $r=new_waitpid($pid,0);
+      if ($r > 0) {
+	carp "Child $r return $?" if $debug;
+	push @result,$r,$?;
+      }
+      else {
+	carp "No such child returned while waiting for $pid" if $debug;
+	push @result,$r,undef;
+      }
+    }
+    else {
+      carp "Undef arg found";
+      push @result,undef,undef
+    };
+  }
+  return @result;
+}
+
+
+sub _run_back {
+  my ($now,$code)=@_;
+  carp "Fork::Queue::_run_back($now,$code) called" if $trace and $debug;
+  my $f=$now ? fork_now : new_fork;
+  if(defined($f) and $f==0) {
+    carp "Running code $code in forked child $$" if $debug;
+    $?=0;
+    eval {
+      &$code();
+    };
+    if ($@) {
+      carp "Uncaught exception $@" if $debug;
+      new_exit(255)
+    }
+    else {
+      carp "Code $code in child $$ returns '$?'" if $? && $debug;
+    }
+    new_exit($?)
+  }
+  return $f;
+}
+
+sub run_back (&) {
+  my $code=shift;
+  carp "Fork::Queue::run_back($code) called" if $trace;
+  return _run_back(0,$code)
+}
+
+sub run_back_now (&) {
+  my $code=shift;
+  carp "Fork::Queue::run_back_now($code) called" if $trace;
+  return _run_back(1,$code)
+}
+
+sub all_exit_ok {
+  carp "Fork::Queue::all_exit_ok(".join(", ",@_).")" if $trace;
+  my @result=waitpids(@_);
+  my $i;
+  for($i=0;$i<=$#result;$i++) {
+    next unless $i&1;
+    if (!defined($result[$i]) or $result[$i]) {
+      carp "Child $_[$i>>1] fail with code $result[$i], waitpid return $result[$i-1]" if $debug;
+      return 0;
+    }
+  }
+  carp "All childs run ok" if $debug;
+  return 1;
+}
+
+# this function is mostly for testing pourposes:
+sub running_now () {
+  _clean;
+  return $queue_now;
 }
 
 *CORE::GLOBAL::wait = \&new_wait;
@@ -291,7 +399,9 @@ calls.
 
 =head2 EXPORT_OK
 
-Function C<fork_now> could be imported.
+Functions C<fork_now>, C<waitpids>, C<run_back>, C<run_back_now>,
+C<all_exit_ok> and C<running_now> can be imported. Tag C<:all> is
+defined to import all of them.
 
 =head2 FUNCTIONS
 
@@ -300,7 +410,7 @@ the module:
 
 =over 4
 
-=item size(),  size(int)
+=item size(),  size($number)
 
 If an argument is given the maximun number of concurrent processes is
 set to it and the number of maximun processes that were allowed before
@@ -321,7 +431,30 @@ exportable so you can do...
       print "I'm the child\n"; exit;
   }
 
-=item debug(), debug(boolean), trace(), trace(boolean)
+=item waitpids(@pid)
+
+Will wait for all the processes in @pid to exit. It returns an array
+with pairs pid and exit values (pid1, exit1, pid2, exit2, pid3,
+exit3,...) as returned by individual waitpid calls.
+
+=item run_back(\&code), run_back { code }
+
+Runs the argument subrutine in a forked child process and returns the
+pid number for the new process.
+
+=item run_back_now(\&code), run_back_now { code }
+
+A mix between run_back and fork_now.
+
+=item all_exit_ok(@pid)
+
+Do a waitpids call and test that all the processes exit with code 0.
+
+=item running_now()
+
+Returns the number of child processes currently running.
+
+=item debug(), debug($boolean), trace(), trace($boolean)
 
 Change or return the status for the debug and trace modes.
 
@@ -335,14 +468,15 @@ the C<size>, C<debug> or C<trace> module functions as in...
   use Fork::Queue size=>10, debug=>1;
 
 Anything that is not C<size>, C<debug> or C<trace> is expected to be a
-function name to be imported (only C<fork_now> is supported at this
-time):
+function name to be imported.
 
-  use Fork::Queue size=>10, 'fork_now';
+  use Fork::Queue size=>10, ':all';
 
 =head2 BUGS
 
-None that I know, but this is just version 0.02!
+None that I know, but this is just version 0.03!
+
+The module has only been tested under Solaris 2.6
 
 Child behaviour althought deterministic could be changed to something
 better. I would accept any suggestions on it.
@@ -363,7 +497,8 @@ Salvador Fandino <sfandino@yahoo.com>
 
 =head1 SEE ALSO
 
-L<perlfunc(1)>, L<perlfork(1)>, L<Parallel::ForkManager>. The
-C<example.pl> script contained in the module distribution.
+L<perlfunc(1)>, L<perlipc(1)>, L<POSIX>, L<perlfork(1)>,
+L<Parallel::ForkManager>. The C<example.pl> script contained in the
+module distribution.
 
 =cut
