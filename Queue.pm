@@ -3,9 +3,17 @@ package Fork::Queue;
 require 5.005_62;
 use strict;
 use warnings;
+require Exporter;
+
 use Carp;
 
-our $VERSION = '0.01';
+our @ISA = qw(Exporter);
+
+our %EXPORT_TAGS = ( all => [ qw( fork_now ) ] );
+our @EXPORT_OK = ( @{ $EXPORT_TAGS{'all'} } );
+our @EXPORT = qw();
+
+our $VERSION = '0.02';
 
 # parameters
 my $queue_size=4;
@@ -20,22 +28,23 @@ my @captured;
 # set STDERR as unbuffered so all the carp calls work as expected
 { my $oldfh=select STDERR; $|=1; select $oldfh }
 
+# extended import to support parameter configuration from use statment
 sub import {
-  my ($pkg,%opts)=@_;
-  foreach my $k (keys %opts) {
-    if($k eq 'size') {
-      size($opts{size});
-    }
-    elsif($k eq 'debug') {
-      debug($opts{debug});
-    }
-    elsif($k eq 'trace') {
-      trace($opts{trace});
-    }
-    else {
-      carp "Unknow option '$k' for $pkg::import call";
+  my ($pkg,@opts)=@_;
+  my $i;
+  for ($i=0; $i<=$#opts; $i++) {
+    my $o=$opts[$i];
+    if( $o eq 'size'
+        or $o eq 'debug'
+        or $o eq 'trace' ) {
+      $#opts>$i or croak "option '$o' needs a value";
+      my $value=$opts[$i+1];
+      { no strict qw( subs refs );
+	&$o($value) }
+      splice @opts,$i--,2;
     }
   }
+  return $pkg->SUPER::import(@opts);
 }
 
 sub size {
@@ -142,26 +151,15 @@ sub new_waitpid ($$) {
   return $w;
 }
 
-sub new_exit (;$) {
+sub new_exit (;$ ) {
   my $e=shift;
   carp "Fork::Queue::exit($e) called" if $trace;
   carp "Process $$ exiting with value $e" if $debug;
   return CORE::exit($e);
 }
 
-sub new_fork () {
-  carp "Fork::Queue::fork called" if $trace;
-  while($queue_now>=$queue_size) {
-    carp "Waiting that some process finishes before continuing" if $debug;
-    my $nw;
-    if (($nw=_wait) != -1) {
-      push @captured,$nw,$?;
-    }
-    else {
-      carp "Fork queue seems to be corrupted, $queue_now childs lost";
-      last;
-    }
-  }
+sub _fork () {
+  carp "Fork::Queue::_fork called" if $trace && $debug;
   my $f=CORE::fork;
   if (defined($f)) {
     if($f == 0) {
@@ -184,10 +182,32 @@ sub new_fork () {
   return $f;
 }
 
+sub new_fork () {
+  carp "Fork::Queue::fork called" if $trace;
+  while($queue_now>=$queue_size) {
+    carp "Waiting that some process finishes before continuing" if $debug;
+    my $nw;
+    if (($nw=_wait) != -1) {
+      push @captured,$nw,$?;
+    }
+    else {
+      carp "Fork queue seems to be corrupted, $queue_now childs lost";
+      last;
+    }
+  }
+  return _fork();
+}
+
+sub fork_now () {
+  carp "Fork::Queue::fork_now called" if $trace;
+  return _fork;
+}
+
 *CORE::GLOBAL::wait = \&new_wait;
 *CORE::GLOBAL::waitpid = \&new_pidwait;
 *CORE::GLOBAL::exit = \&new_exit;
 *CORE::GLOBAL::fork = \&new_fork;
+
 
 1;
 __END__
@@ -242,13 +262,13 @@ process running
 
 =head1 DESCRIPTION
 
-This module lets you parallelice one program using the fork, exit,
-wait and waitpid calls as usual and without the need to take care of
-creating too much processes and overloading the machine.
+This module lets you parallelice one program using the C<fork>,
+C<exit>, C<wait> and C<waitpid> calls as usual and without the need to
+take care of creating too much processes and overloading the machine.
 
-It works redefining fork, exit, wait and waitpid functions so old
-programs do not have to be modified to use this module (only the 'use
-Fork::Queue' sentence is needed).
+It works redefining C<fork>, C<exit>, C<wait> and C<waitpid> functions
+so old programs do not have to be modified to use this module (only
+the C<use Fork::Queue> sentence is needed).
 
 Additionally, the module have two debugging modes (debug and trace)
 that can be activated and that seem too be very useful when developing
@@ -257,8 +277,8 @@ parallel aplications.
 Debug mode when activated dumps lots of information about processes
 being created, exiting, being caught be parent, etc.
 
-Trace mode just prints a line every time one of the fork, exit, wait
-or waitpid functions is called.
+Trace mode just prints a line every time one of the C<fork>, C<exit>,
+C<wait> or C<waitpid> functions is called.
 
 Childs processes continue to use the modified functions, but its
 queues are reset and the maximun process number for them is set to
@@ -266,7 +286,12 @@ queues are reset and the maximun process number for them is set to
 
 =head2 EXPORT
 
-This module redefines the fork, wait and exit calls
+This module redefines the C<fork>, C<wait>, C<waitpid> and C<exit>
+calls.
+
+=head2 EXPORT_OK
+
+Function C<fork_now> could be imported.
 
 =head2 FUNCTIONS
 
@@ -283,11 +308,24 @@ is returned.
 
 If no argument is given, the number of processes allowed is returned.
 
+=item fork_now()
+
+Sometimes you would need to fork a new child without waiting for other
+child to exit if the queue is full, C<fork_now> does that. It is
+exportable so you can do...
+
+  use Fork::Queue size => 5, qw(fork_now), debug =>1;
+
+  $f=fork_now;
+  if(defined $f and $f == 0) {
+      print "I'm the child\n"; exit;
+  }
+
 =item debug(), debug(boolean), trace(), trace(boolean)
 
 Change or return the status for the debug and trace modes.
 
-=item import(name,%options)
+=item import(pkg,opt,val,opt,val,...,fnt_name,fnt_name,...)
 
 The import functions is not usually explicitally called but by the
 C<use Fork::Queue> statement. The options allowed are C<size>, C<debug>
@@ -296,13 +334,28 @@ the C<size>, C<debug> or C<trace> module functions as in...
 
   use Fork::Queue size=>10, debug=>1;
 
+Anything that is not C<size>, C<debug> or C<trace> is expected to be a
+function name to be imported (only C<fork_now> is supported at this
+time):
+
+  use Fork::Queue size=>10, 'fork_now';
 
 =head2 BUGS
 
-None that I know, but this is just version 0.01!
+None that I know, but this is just version 0.02!
 
-Child behaviuor althought deterministic could be changed to something
+Child behaviour althought deterministic could be changed to something
 better. I would accept any suggestions on it.
+
+=head1 INSTALL
+
+As usual, unpack de module distribution and from the newly created
+directory run:
+
+  $ perl Makefile.PL
+  $ make
+  $ make test
+  $ make install
 
 =head1 AUTHOR
 
@@ -310,6 +363,7 @@ Salvador Fandino <sfandino@yahoo.com>
 
 =head1 SEE ALSO
 
-L<perlfunc(1)>, L<perlfork(1)>, L<Parallel::ForkManager>.
+L<perlfunc(1)>, L<perlfork(1)>, L<Parallel::ForkManager>. The
+C<example.pl> script contained in the module distribution.
 
 =cut
