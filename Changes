@@ -1,5 +1,9 @@
 Revision history for Perl extension Fork::Queue.
 
+0.04 Corrected bug that replace waitpid with an unexistant function
+
+0.03 New set of high level functions added
+
 0.02 Added README file automatically generated from embedded pod
      documentation.
 

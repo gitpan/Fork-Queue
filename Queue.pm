@@ -20,7 +20,7 @@ our %EXPORT_TAGS = ( all => [ qw( fork_now
 our @EXPORT_OK = ( @{ $EXPORT_TAGS{'all'} } );
 our @EXPORT = qw();
 
-our $VERSION = '0.03';
+our $VERSION = '0.04';
 
 # parameters
 my $queue_size=4;
@@ -103,7 +103,7 @@ sub trace {
 # sub to store internally captured processes
 sub _push_captured {
   push @captured, shift,$?;
-  croak "corrupted captured stack" unless ($#captured & 1)
+  croak "captured stack is corrupted" unless ($#captured & 1)
 }
 
 # do the real wait and housekeeping
@@ -312,7 +312,7 @@ sub running_now () {
 }
 
 *CORE::GLOBAL::wait = \&new_wait;
-*CORE::GLOBAL::waitpid = \&new_pidwait;
+*CORE::GLOBAL::waitpid = \&new_waitpid;
 *CORE::GLOBAL::exit = \&new_exit;
 *CORE::GLOBAL::fork = \&new_fork;
 

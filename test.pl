@@ -17,7 +17,7 @@ print "ok 1\n";
 
 ######################### End of black magic.
 
-print "2..5\n";
+print "2..6\n";
 
 # test that not more than SIZE childs are running at the same time
 $ok=1;
@@ -74,3 +74,13 @@ push @pids, run_back_now { exit(1) };
 
 $ok&&=!all_exit_ok(@pids);
 print $ok ? "ok 5\n" : "not ok 5\n";
+
+# test waitpid
+$ok=1;
+$pid=fork;
+if (defined $pid and $pid==0) {
+  sleep 1;
+  exit(0);
+}
+
+print ($pid==waitpid($pid,0) ? "ok 6\n" : "not ok 6\n" );
